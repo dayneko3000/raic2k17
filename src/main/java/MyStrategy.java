@@ -33,7 +33,7 @@ public final class MyStrategy implements Strategy {
     private final int shiftConstant = 6;
     private final Map<Long, Vehicle> vehicleById = new HashMap<>();
     private final Map<Long, Integer> updateTickByVehicleId = new HashMap<>();
-    private final int orderY = 100;
+    private int orderY = 100;
     private Random random;
     private TerrainType[][] terrainTypeByCellXY;
     private WeatherType[][] weatherTypeByCellXY;
@@ -44,6 +44,7 @@ public final class MyStrategy implements Strategy {
     private Queue<Consumer<Move>> delayedMoves = new ArrayDeque<>();
 
     private int ping = 50;
+    private Point selfVector;
     private Point tankMass, arrvMass, helicopterMass, fighterMass, ifvMass, nearestEnemy, groundMass, airMass;
     private int center = 100;
     private Point airPoint1 = new Point(orderY, orderY), airPoint2 = new Point(200, orderY);
@@ -57,6 +58,8 @@ public final class MyStrategy implements Strategy {
     private boolean horizontaled = false;
     private boolean discaled = false;
     private boolean turned = false;
+    private boolean rotating = false;
+    private boolean init = false;
 
     /**
      * Основной метод стратегии, осуществляющий управление армией. Вызывается каждый тик.
@@ -74,6 +77,11 @@ public final class MyStrategy implements Strategy {
         if (me.getRemainingActionCooldownTicks() > 0) {
             return;
         }
+        if (rotating)
+            if (enough())
+                rotating = false;
+            else
+                return;
 
         if (executeDelayedMove()) {
             return;
@@ -117,18 +125,23 @@ public final class MyStrategy implements Strategy {
 
         for (Vehicle vehicle : world.getNewVehicles()) {
             vehicleById.put(vehicle.getId(), vehicle);
-            updateTickByVehicleId.put(vehicle.getId(), world.getTickIndex());
+            if (vehicle.getPlayerId() == me.getId()) {
+                updateTickByVehicleId.put(vehicle.getId(), world.getTickIndex());
+            }
         }
 
         for (VehicleUpdate vehicleUpdate : world.getVehicleUpdates()) {
             long vehicleId = vehicleUpdate.getId();
+            Vehicle vehicle = vehicleById.get(vehicleId);
 
             if (vehicleUpdate.getDurability() == 0) {
                 vehicleById.remove(vehicleId);
                 updateTickByVehicleId.remove(vehicleId);
             } else {
-                vehicleById.put(vehicleId, new Vehicle(vehicleById.get(vehicleId), vehicleUpdate));
-                updateTickByVehicleId.put(vehicleId, world.getTickIndex());
+                if (vehicleUpdate.getX() != vehicle.getX() || vehicleUpdate.getY() != vehicle.getY()) {
+                    vehicleById.put(vehicleId, new Vehicle(vehicleById.get(vehicleId), vehicleUpdate));
+                    updateTickByVehicleId.put(vehicleId, world.getTickIndex());
+                }
             }
         }
 
@@ -139,6 +152,20 @@ public final class MyStrategy implements Strategy {
         arrvMass = getMassOfVehicle(ARRV);
         groundMass = getMassOfVehicle(ARRV, TANK, IFV);
         airMass = getMassOfVehicle(HELICOPTER, FIGHTER);
+
+        if (!init) {
+            if (tankMass.getX() > world.getWidth() / 2) {
+                orderY = (int) world.getHeight() - 100;
+                airPoint1 = new Point(orderY, orderY);
+                airPoint2 = new Point(world.getWidth() - 200, orderY);
+                groundPoint1 = new Point(world.getWidth() - 40, orderY);
+                groundPoint2 = new Point(world.getWidth() - 120, orderY);
+                groundPoint3 = new Point(world.getWidth() - 190, orderY);
+
+            }
+            selfVector = new Point(world.getWidth() / 2 - groundPoint2.x, world.getHeight() / 2 - groundPoint2.y);
+            init = true;
+        }
 
         final double[] distance = {99999};
         streamVehicles(
@@ -184,7 +211,7 @@ public final class MyStrategy implements Strategy {
 
     private boolean enough() {
         return streamVehicles(Ownership.ALLY).allMatch(
-                vehicle -> world.getTickIndex() - updateTickByVehicleId.get(vehicle.getId()) > 1
+                vehicle -> world.getTickIndex() - updateTickByVehicleId.get(vehicle.getId()) > 2
         );
     }
 
@@ -289,7 +316,7 @@ public final class MyStrategy implements Strategy {
         }
         if (enough() && !discaled) {
             selectVehicleType(null);
-            scale(groundPoint2, 0.5, game.getTankSpeed() * 0.6);
+            scale(groundPoint2, 0.3, game.getTankSpeed() * 0.6);
             discaled = true;
         }
     }
@@ -302,6 +329,23 @@ public final class MyStrategy implements Strategy {
             move.setTop(y - 1);
             move.setBottom(y + 1);
         });
+    }
+
+    private double getAngle() {
+        double a = streamVehicles(Ownership.ALLY, TANK, ARRV, IFV).mapToDouble((vehicle) ->
+                (vehicle.getX() - groundMass.x) * (vehicle.getY() - groundMass.y)
+        ).sum();
+        double b = streamVehicles(Ownership.ALLY, TANK, ARRV, IFV).mapToDouble((vehicle) ->
+                (vehicle.getX() - groundMass.x) * (vehicle.getX() - groundMass.x)
+        ).sum();
+        return -1 / (a / b);
+//        double a = streamVehicles(Ownership.ALLY, TANK, ARRV, IFV).mapToDouble(Vehicle::getX
+//        ).min().orElse(0);
+//        double b = streamVehicles(Ownership.ALLY, TANK, ARRV, IFV).mapToDouble(Vehicle::getY
+//        ).min().orElse(0);
+//        double k = streamVehicles(Ownership.ALLY, TANK, ARRV, IFV).
+//                mapToDouble((vehicle -> (vehicle.getY() - b + 1) / (vehicle.getX() - a + 1))).sum();
+//        return k / streamVehicles(Ownership.ALLY, TANK, ARRV, IFV).count();
     }
 
     private Point getGroupMass(int group) {
@@ -501,21 +545,17 @@ public final class MyStrategy implements Strategy {
         }
     }
 
-    private double getAngleToTurn() {
-        if (nearestEnemy == null || arrvMass == null || ifvMass == null || groundMass == null) {
-            return Math.PI;
-        }
-
-        Point v1 = new Point(arrvMass.x - groundMass.x, arrvMass.y - groundMass.y);
-        Point v2 = new Point(ifvMass.x - groundMass.x, ifvMass.y - groundMass.y);
-        Point v3 = new Point(nearestEnemy.x - groundMass.x, nearestEnemy.y - groundMass.y);
-
-        double sumAngCore = Math.abs(getAngle(v1, v3)) + Math.abs(getAngle(v2, v3));
-        double sumAngTurned = Math.abs(getAngle(turnVector(v1, Math.PI / 20), v3)) + Math.abs(getAngle(turnVector(v2, Math.PI / 20), v3));
-        if (sumAngCore > sumAngTurned) {
-            return Math.PI;
-        }
-        return -Math.PI;
+    private double getAngleToEnemy() {
+        Point attack = new Point(nearestEnemy.x - groundMass.x, nearestEnemy.y - groundMass.y);
+//        double k = getAngle();
+//        Point self = new Point(1, k);
+        double angle = getAngle(selfVector, attack);
+        if (Math.abs(angle) < Math.PI / 2)
+            return angle;
+        else if (angle < 0)
+            return Math.PI + angle;
+        else
+            return Math.PI - angle;
     }
 
     private double getAngle(Point a, Point b) {
@@ -532,10 +572,8 @@ public final class MyStrategy implements Strategy {
 
     private void sparta() {
         if (world.getTickIndex() % ping == 0) {
-            selectGroup(0);
-            moveFromTo(getGroupMass(0), groundMass, game.getTankSpeed() * 0.6);
-            selectGroup(1);
-            moveFromTo(getGroupMass(1), groundMass, game.getTankSpeed() * 0.6);
+//            selectVehicleType(null);
+//            scale(groundMass, 0.8, null);
         }
     }
 
@@ -553,9 +591,15 @@ public final class MyStrategy implements Strategy {
      * Основная логика нашей стратегии.
      */
     private void go() {
-        if (world.getTickIndex() % ping == 0) {
+        if (world.getTickIndex() % ping == 0 && enough()) {
             selectVehicleType(null);
-
+            double angleToTurn = getAngleToEnemy();
+            if (Math.abs(angleToTurn) > Math.PI / 50) {
+                rotateAround(groundMass, angleToTurn);
+                selfVector = turnVector(selfVector, angleToTurn);
+                rotating = true;
+                return;
+            }
             Point selfCenter = getMassOfVehicle(null);
             moveFromTo(selfCenter, nearestEnemy, game.getTankSpeed() * 0.6);
         }
