@@ -30,7 +30,6 @@ import static model.VehicleType.TANK;
 @SuppressWarnings({"UnsecureRandomNumberGeneration", "FieldCanBeLocal", "unused", "OverlyLongMethod"})
 public final class MyStrategy implements Strategy {
     private static final int AIR = 1;
-    private final int shiftConstant = 6;
     private final Map<Long, Vehicle> vehicleById = new HashMap<>();
     private final Map<Long, Integer> updateTickByVehicleId = new HashMap<>();
     private int orderY = 100;
@@ -44,7 +43,7 @@ public final class MyStrategy implements Strategy {
     private Queue<Consumer<Move>> delayedMoves = new ArrayDeque<>();
 
     private int ping = 50;
-    private Point selfVector;
+    private Point selfVector = new Point(1, 0);
     private Point tankMass, arrvMass, helicopterMass, fighterMass, ifvMass, nearestEnemy, groundMass, airMass;
     private int center = 100;
     private Point airPoint1 = new Point(orderY, orderY), airPoint2 = new Point(200, orderY);
@@ -57,6 +56,7 @@ public final class MyStrategy implements Strategy {
     private boolean shifted = false;
     private boolean horizontaled = false;
     private boolean discaled = false;
+    private boolean start = false;
     private boolean turned = false;
     private boolean rotating = false;
     private boolean init = false;
@@ -77,17 +77,20 @@ public final class MyStrategy implements Strategy {
         if (me.getRemainingActionCooldownTicks() > 0) {
             return;
         }
-        if (rotating)
-            if (enough())
+        if (rotating) {
+            if (enough()) {
                 rotating = false;
-            else
+            } else {
                 return;
+            }
+        }
 
         if (executeDelayedMove()) {
             return;
         }
         ready();
-        if (turned && enough()) {
+//         || streamVehicles(Ownership.ALLY).count() > 300
+        if (start) {
             if (!inBattle()) {
                 go();
             } else {
@@ -162,8 +165,8 @@ public final class MyStrategy implements Strategy {
                 groundPoint2 = new Point(world.getWidth() - 120, orderY);
                 groundPoint3 = new Point(world.getWidth() - 190, orderY);
 
+                selfVector = new Point(-1, 0);
             }
-            selfVector = new Point(world.getWidth() / 2 - groundPoint2.x, world.getHeight() / 2 - groundPoint2.y);
             init = true;
         }
 
@@ -211,7 +214,7 @@ public final class MyStrategy implements Strategy {
 
     private boolean enough() {
         return streamVehicles(Ownership.ALLY).allMatch(
-                vehicle -> world.getTickIndex() - updateTickByVehicleId.get(vehicle.getId()) > 2
+                vehicle -> world.getTickIndex() - updateTickByVehicleId.get(vehicle.getId()) > 5
         );
     }
 
@@ -276,9 +279,9 @@ public final class MyStrategy implements Strategy {
             return;
         }
         if (!scaled && enough()) {
-            for (double row : getRowList()) {
-                selectRow((int) row);
-                shiftVertical(((int) row - 100) * 2);
+            for (int row : getRowList(ARRV)) {
+                selectRow(row);
+                shiftVertical(((row - orderY) * 2));
             }
             scaled = true;
             return;
@@ -308,16 +311,23 @@ public final class MyStrategy implements Strategy {
 
             return;
         }
-        if (enough() && !turned) {
-            selectVehicleType(null);
-            rotateAround(groundPoint2, Math.PI / 4);
-            turned = true;
+//        if (enough() && !turned) {
+//            selectVehicleType(null);
+//            rotateAround(groundPoint2, Math.PI / 4, null);
+//            turned = true;
+//            return;
+//        }
+        if (enough() && !discaled) {
+            for (int row : getRowList(ARRV, TANK, IFV, HELICOPTER, FIGHTER)) {
+                selectRow(row);
+                shiftVertical(-(row - orderY) / 2);
+            }
+            discaled = true;
             return;
         }
-        if (enough() && !discaled) {
-            selectVehicleType(null);
-            scale(groundPoint2, 0.3, game.getTankSpeed() * 0.6);
-            discaled = true;
+        if (!start) {
+            if (discaled && enough())
+                start = true;
         }
     }
 
@@ -367,8 +377,8 @@ public final class MyStrategy implements Strategy {
         });
     }
 
-    private List<Double> getRowList() {
-        Set<Double> result = streamVehicles(Ownership.ALLY, VehicleType.ARRV).map(Vehicle::getY).collect(Collectors.toSet());
+    private List<Integer> getRowList(VehicleType... types) {
+        Set<Integer> result = streamVehicles(Ownership.ALLY, types).map((v) -> (int) v.getY()).collect(Collectors.toSet());
         return new ArrayList<>(result);
     }
 
@@ -473,14 +483,16 @@ public final class MyStrategy implements Strategy {
     }
 
 
-    private void rotateAround(Point p, double angle) {
+    private void rotateAround(Point p, double angle, Double maxSpeed) {
         delayedMoves.add(move ->
         {
             move.setAction(ActionType.ROTATE);
             move.setX(p.getX());
             move.setY(p.getY());
             move.setAngle(angle);
-//            move.setMaxSpeed(game.getTankSpeed());
+            if (maxSpeed != null) {
+                move.setMaxAngularSpeed(maxSpeed);
+            }
         });
     }
 
@@ -540,7 +552,7 @@ public final class MyStrategy implements Strategy {
             double arrDist = distance(arrvMass, nearestEnemy);
             if (arrDist < distance(tankMass, nearestEnemy) || arrDist < distance(ifvMass, nearestEnemy)) {
                 selectVehicleType(null);
-                rotateAround(groundMass, Math.PI);
+                rotateAround(groundMass, Math.PI, null);
             }
         }
     }
@@ -550,12 +562,13 @@ public final class MyStrategy implements Strategy {
 //        double k = getAngle();
 //        Point self = new Point(1, k);
         double angle = getAngle(selfVector, attack);
-        if (Math.abs(angle) < Math.PI / 2)
+        if (Math.abs(angle) < Math.PI / 2) {
             return angle;
-        else if (angle < 0)
+        } else if (angle < 0) {
             return Math.PI + angle;
-        else
+        } else {
             return Math.PI - angle;
+        }
     }
 
     private double getAngle(Point a, Point b) {
@@ -572,9 +585,19 @@ public final class MyStrategy implements Strategy {
 
     private void sparta() {
         if (world.getTickIndex() % ping == 0) {
-//            selectVehicleType(null);
-//            scale(groundMass, 0.8, null);
+            selectVehicleType(null);
+//            Point battlePoint = new Point(groundMass.x + selfVector.x * 25, groundMass.x  + selfVector.y * 25);
+            scale(groundMass, 0.2, null);
         }
+    }
+
+    private void moveVector(Point p) {
+        delayedMoves.add(move ->
+        {
+            move.setAction(ActionType.MOVE);
+            move.setX(p.x);
+            move.setY(p.y);
+        });
     }
 
     private void selectGroup(int group) {
@@ -595,7 +618,7 @@ public final class MyStrategy implements Strategy {
             selectVehicleType(null);
             double angleToTurn = getAngleToEnemy();
             if (Math.abs(angleToTurn) > Math.PI / 50) {
-                rotateAround(groundMass, angleToTurn);
+                rotateAround(groundMass, angleToTurn, Math.PI / 50);
                 selfVector = turnVector(selfVector, angleToTurn);
                 rotating = true;
                 return;
@@ -710,4 +733,3 @@ public final class MyStrategy implements Strategy {
         }
     }
 }
-
