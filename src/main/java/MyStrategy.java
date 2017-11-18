@@ -11,6 +11,7 @@ import model.World;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,7 @@ public final class MyStrategy implements Strategy {
     private static final int AIR = 1;
     private final Map<Long, Vehicle> vehicleById = new HashMap<>();
     private final Map<Long, Integer> updateTickByVehicleId = new HashMap<>();
-    Vehicle fighter;
+    private Vehicle fighter;
     private int orderY = 100;
     private Random random;
     private TerrainType[][] terrainTypeByCellXY;
@@ -44,7 +45,6 @@ public final class MyStrategy implements Strategy {
     private Game game;
     private Move move;
     private Queue<Consumer<Move>> delayedMoves = new ArrayDeque<>();
-    private int ping = 60;
     private int net = 10;
     private Point selfVector = new Point(1, 0);
     private Point tankMass, arrvMass, helicopterMass, fighterMass, ifvMass, nearestEnemy, groundMass, airMass;
@@ -110,11 +110,10 @@ public final class MyStrategy implements Strategy {
             return;
         }
         if (fireInTheHole()) {
-//            rotateAround(new Point(game.getOp));
+            rotateAround(new Point(world.getOpponentPlayer().getNextNuclearStrikeX(), world.getOpponentPlayer().getNextNuclearStrikeY()), 0, 1.2);
         }
         airAttack();
         ready();
-//         || streamVehicles(Ownership.ALLY).count() > 300
         if (start) {
             if (!inBattle()) {
                 go();
@@ -350,9 +349,13 @@ public final class MyStrategy implements Strategy {
             return;
         }
         if (enough() && !discaledHorizonal) {
-            for (int column : getColumnList(ARRV, TANK, IFV, HELICOPTER, FIGHTER)) {
+            boolean shift = false;
+            List<Integer> columns = getColumnList(ARRV, TANK, IFV, HELICOPTER, FIGHTER);
+            Collections.sort(columns);
+            for (int column : columns) {
                 selectColumn(column);
-                shiftHorizontal(-(column - center) / 2);
+                moveVector(new Point(-(column - center) / 2, shift ? -5 : 0), game.getTankSpeed() * 0.6);
+                shift = !shift;
             }
             discaledHorizonal = true;
             return;
@@ -628,12 +631,12 @@ public final class MyStrategy implements Strategy {
 
     private double getAngleToEnemy() {
         Point attack = new Point(nearestEnemy.x - groundMass.x, nearestEnemy.y - groundMass.y);
-        double angle = getAngle(selfVector, attack);
-        return angle;
+        return getAngle(selfVector, attack);
     }
 
     private double getAngle(Point a, Point b) {
-        return Math.acos((a.x * b.x + a.y * b.y) / (Math.sqrt(a.x * a.x + a.y * a.y) * Math.sqrt(b.x * b.x + b.y * b.y)));
+        int sign = a.x * b.y - b.x * a.y > 0 ? 1 : -1;
+        return sign * Math.acos((a.x * b.x + a.y * b.y) / (Math.sqrt(a.x * a.x + a.y * a.y) * Math.sqrt(b.x * b.x + b.y * b.y)));
     }
 
     private Point turnVector(Point v, double ang) {
@@ -645,18 +648,17 @@ public final class MyStrategy implements Strategy {
     }
 
     private void sparta() {
-        if (world.getTickIndex() % ping == 0) {
-            selectGroup(2);
-            scale(groundMass, 0.2, null);
-        }
+        selectGroup(2);
+        scale(groundMass, 0.2, null);
     }
 
-    private void moveVector(Point p) {
+    private void moveVector(Point p, double maxSpeed) {
         delayedMoves.add(move ->
         {
             move.setAction(ActionType.MOVE);
             move.setX(p.x);
             move.setY(p.y);
+            move.setMaxSpeed(maxSpeed);
         });
     }
 
@@ -674,21 +676,19 @@ public final class MyStrategy implements Strategy {
      * Основная логика нашей стратегии.
      */
     private void go() {
-        if (world.getTickIndex() % ping == 0) {
-            selectGroup(2);
-            double angleToTurn = getAngleToEnemy();
-            if (Math.abs(angleToTurn) > Math.PI / 18 && distance(groundMass, nearestEnemy) > 150) {
-                rotateAround(groundMass, angleToTurn, factor);
-                selfVector = turnVector(selfVector, angleToTurn);
-                return;
-            }
-            Point selfCenter = getMassOfVehicle(Ownership.ALLY);
-            moveFromTo(selfCenter, nearestEnemy, game.getTankSpeed() * 0.6);
+        selectGroup(2);
+        double angleToTurn = getAngleToEnemy();
+        if (Math.abs(angleToTurn) > Math.PI / 18 && distance(groundMass, nearestEnemy) > 50) {
+            rotateAround(groundMass, angleToTurn, factor);
+            selfVector = turnVector(selfVector, angleToTurn);
+            return;
         }
+        Point selfCenter = getMassOfVehicle(Ownership.ALLY);
+        moveFromTo(selfCenter, nearestEnemy, game.getTankSpeed() * 0.6);
     }
 
     private void airAttack() {
-        if (world.getTickIndex() % ping == 0 && fighterSelected && fighter != null) {
+        if (fighterSelected && fighter != null) {
             selectGroup(1);
             final double[] minDist = {99999};
             final Point[] nuclearPoint = new Point[1];
@@ -696,7 +696,7 @@ public final class MyStrategy implements Strategy {
             {
                 Point p = new Point(v.getX(), v.getY());
                 if (minDist[0] > distance(p, new Point(fighter.getX(), fighter.getY()))
-                        && distance(p, groundMass) > 2 * game.getTacticalNuclearStrikeRadius() / 3) {
+                        && distance(p, groundMass) > game.getTacticalNuclearStrikeRadius()) {
                     minDist[0] = distance(p, new Point(fighter.getX(), fighter.getY()));
                     nuclearPoint[0] = new Point(v.getX(), v.getY());
                 }
