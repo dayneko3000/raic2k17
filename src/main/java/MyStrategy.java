@@ -727,20 +727,26 @@ public final class MyStrategy implements Strategy {
             groundVector = turnVector(groundVector, angleToTurn);
             return;
         }
-        if (inBattle(GROUND)) {
-            sparta(GROUND);
+        if (!isBigTarget(nearestGroundEnemy)) {
+            moveFromTo(groundMass, nearestGroundEnemy, game.getTankSpeed() * 0.6);
         } else {
-            if (getGroupAvarageHealth(GROUND) > 0.2) {
-                moveFromTo(groundMass, groundPoint2, game.getTankSpeed() * 0.6);
+            double dist = distance(groundMass, nearestGroundEnemy);
+            if (getEnemyAround(nearestGroundEnemy, game.getTacticalNuclearStrikeRadius() * 2) > streamVehicles(Ownership.ALLY).count() * 0.7) {
+                Point target = new Point(groundMass.getX() + (nearestGroundEnemy.getX() - groundMass.getX()) / dist * (dist - game.getTankVisionRange() - game.getTankSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()),
+                        groundMass.getY() + (nearestGroundEnemy.getY() - groundMass.getY()) / dist * (dist - game.getTankVisionRange() - game.getTankSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()));
+                moveFromTo(groundMass, target, game.getTankSpeed() * 0.6);
             } else {
                 moveFromTo(groundMass, nearestGroundEnemy, game.getTankSpeed() * 0.6);
             }
         }
     }
 
-    private void goAir() {
+    private int getGroupCount(int group) {
+        return (int)streamVehicles(Ownership.ALLY).filter((v)-> v.getGroups()[0] == group).count();
+    }
 
-        if (distance(groundMass, nearestGroundEnemy) < 100 && isBigTarget(nearestGroundEnemy)) {
+    private void goAir() {
+        if (distance(groundMass, nearestGroundEnemy) < 30 && isBigTarget(nearestGroundEnemy)) {
             if (distance(groundMass, airMass) < 50) {
                 double angleToTurn = getAngle(airVector, groundVector);
 
@@ -760,7 +766,7 @@ public final class MyStrategy implements Strategy {
                 if (me.getRemainingNuclearStrikeCooldownTicks() > 100) {
                     coeff = 1.2;
                 } else {
-                    coeff = 0.6;
+                    coeff = weatherTypeByCellXY[(int)airMass.x / 32][(int)airMass.y / 32] == WeatherType.RAIN ? 0.6 : weatherTypeByCellXY[(int)airMass.x / 32][(int)airMass.y / 32] == WeatherType.CLOUD ? 0.8 : 1;
                 }
                 Point target = new Point(groundMass.getX() + (nearestAirEnemy.getX() - groundMass.getX()) / dist * (dist - game.getFighterVisionRange() * coeff - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()),
                         groundMass.getY() + (nearestAirEnemy.getY() - groundMass.getY()) / dist * (dist - game.getFighterVisionRange() * coeff - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()));
@@ -780,16 +786,20 @@ public final class MyStrategy implements Strategy {
         }
     }
 
-    private boolean isBigTarget(Point p) {
+    private int getEnemyAround(Point p, double radius) {
         int countEnemy = 0;
         List<Vehicle> vList = streamVehicles(Ownership.ENEMY).collect(Collectors.toList());
         for (Vehicle v : vList) {
-            if (v.getDistanceTo(p.x, p.y) < game.getTacticalNuclearStrikeRadius()) {
+            if (v.getDistanceTo(p.x, p.y) < radius) {
                 countEnemy++;
             }
-            if (countEnemy > 30) {
-                return true;
-            }
+        }
+        return countEnemy;
+    }
+
+    private boolean isBigTarget(Point p) {
+        if (getEnemyAround(p, game.getTacticalNuclearStrikeRadius()) > 30) {
+            return true;
         }
         return false;
     }
@@ -809,13 +819,17 @@ public final class MyStrategy implements Strategy {
         if (me.getRemainingNuclearStrikeCooldownTicks() > 0) {
             return false;
         }
-        if (distance(nearestAirEnemy, airMass) > game.getFighterVisionRange() + 100 && distance(nearestGroundEnemy, groundMass) > game.getTankVisionRange() + 100) {
+        if (nearestAirEnemy != null
+                && nearestGroundEnemy != null
+                && distance(nearestAirEnemy, airMass) > game.getFighterVisionRange() + 100
+                && distance(nearestGroundEnemy, groundMass) > game.getTankVisionRange() + 100) {
             return false;
         }
+        int minValue = 0;
         Point nuclearPoint = null;
         Vehicle nuclearAlly = null;
         Map<Point, Integer> groupCount = new HashMap<>();
-        List<Vehicle> nuclearPoints = new ArrayList<>();
+        Map<Point, Integer> deadCount = new HashMap<>();
         for (Vehicle v : streamVehicles(Ownership.ENEMY).collect(Collectors.toList())) {
             Point p = new Point(v.getX(), v.getY());
             if (airMass != null && groundMass != null) {
@@ -823,40 +837,39 @@ public final class MyStrategy implements Strategy {
                     continue;
                 }
             }
-            nuclearPoints.add(v);
             int enemyCountAround = 1;
+            int deadCountAround = 0;
             for (Vehicle v2 : streamVehicles(Ownership.ENEMY).collect(Collectors.toList())) {
                 if (v2.getDistanceTo(p.x, p.y) < game.getTacticalNuclearStrikeRadius()) {
                     enemyCountAround++;
                 }
+                if (v2.getDistanceTo(p.x, p.y) < game.getTacticalNuclearStrikeRadius() && v2.getDurability() <= 99 * (1 - v2.getDistanceTo(p.x, p.y) / game.getTacticalNuclearStrikeRadius())) {
+                    deadCountAround++;
+                }
             }
             groupCount.put(p, enemyCountAround);
+            deadCount.put(p, deadCountAround);
         }
 
-        nuclearPoints.sort((o1, o2) ->
-        {
-            Point p = new Point(o1.getX(), o1.getY());
-            Point p2 = new Point(o2.getX(), o2.getY());
-            return -Integer.compare(groupCount.get(p), groupCount.get(p2));
-        });
 
-        for (Vehicle enemy : nuclearPoints) {
-            boolean o = false;
-            int minValue = 99999;
-            Point p = new Point(enemy.getX(), enemy.getY());
-            for (Vehicle ally : streamVehicles(Ownership.ALLY).collect(Collectors.toList())) {
+        for (Vehicle ally : streamVehicles(Ownership.ALLY).collect(Collectors.toList())) {
+            for (Vehicle enemy : streamVehicles(Ownership.ENEMY).collect(Collectors.toList())) {
+                Point p = new Point(enemy.getX(), enemy.getY());
+                Integer enemyCount = groupCount.get(p);
+                Integer enemyDeadCount = deadCount.get(p);
+                if (enemyCount == null) {
+                    continue;
+                }
+
                 if (isVisible(ally, p)
-                        && groupCount.get(p) > 5
-                        && ally.getDistanceTo(p.x, p.y) < minValue
+                        && minValue < enemyCount + enemyDeadCount * 2
+                        && enemyCount > 5
                         && distance(p, groundMass) > game.getTacticalNuclearStrikeRadius()
                         && distance(p, airMass) > game.getTacticalNuclearStrikeRadius()) {
                     nuclearPoint = p;
                     nuclearAlly = ally;
-                    o = true;
+                    minValue = enemyCount + enemyDeadCount * 2;
                 }
-            }
-            if (o) {
-                break;
             }
         }
         if (nuclearPoint == null) {
@@ -864,13 +877,19 @@ public final class MyStrategy implements Strategy {
         }
         final Point finalNuclearPoint = nuclearPoint;
         final Vehicle finalNuclearAlly = nuclearAlly;
+        selectGroup(finalNuclearAlly.getGroups()[0]);
         delayedMoves.add(move ->
         {
-            if (isVisible(vehicleById.get(finalNuclearAlly.getId()), new Point(finalNuclearPoint.x,finalNuclearPoint.y))) {
+            move.setAction(ActionType.MOVE);
+            move.setX(0);
+            move.setY(0);
+        });
+        delayedMoves.add(move ->
+        {
+            if (isVisible(vehicleById.get(finalNuclearAlly.getId()), finalNuclearPoint)) {
                 move.setAction(ActionType.TACTICAL_NUCLEAR_STRIKE);
                 move.setX(finalNuclearPoint.x);
                 move.setY(finalNuclearPoint.y);
-                System.out.println("boom");
                 move.setVehicleId(finalNuclearAlly.getId());
             }
         });
