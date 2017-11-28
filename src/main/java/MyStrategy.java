@@ -1,4 +1,5 @@
 import model.ActionType;
+import model.Facility;
 import model.Game;
 import model.Move;
 import model.Player;
@@ -11,7 +12,7 @@ import model.World;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,46 +36,68 @@ public final class MyStrategy implements Strategy {
     private static final int AIR = 1, GROUND = 2;
     private final Map<Long, Vehicle> vehicleById = new HashMap<>();
     private final Map<Long, Integer> updateTickByVehicleId = new HashMap<>();
+    int assignIndex = 0;
     private int orderY = 120;
     private Random random;
     private TerrainType[][] terrainTypeByCellXY;
     private WeatherType[][] weatherTypeByCellXY;
+    private List<Facility> facilities;
     private Player me;
     private World world;
     private Game game;
     private Move move;
-    private Queue<Consumer<Move>> delayedMoves = new ArrayDeque<>();
-    private int ping = 20;
+    private Queue<Consumer<Move>> groundDeq = new ArrayDeque<>();
+    private Queue<Consumer<Move>> airDeq = new ArrayDeque<>();
+    private Queue<Consumer<Move>> nuclearDeq = new ArrayDeque<>();
+    private Queue<Consumer<Move>> facilityDeq = new ArrayDeque<>();
+    private int ping = 25;
     private int net = 10;
     private Point groundVector = new Point(1, 0);
-    private Point airVector = new Point(1, 0);
+    private Point airVector = new Point(0, 1);
     private Point tankMass, arrvMass, helicopterMass, fighterMass, ifvMass, nearestGroundEnemy, nearestAirEnemy, groundMass, airMass;
     private int center = 120;
-    private Point airPoint1 = new Point(orderY, orderY), airPoint2 = new Point(200, orderY);
+    private Point airPoint1 = new Point(225, 35), airPoint2 = new Point(230, 230);
     private Point groundPoint1 = new Point(40, orderY), groundPoint2 = new Point((int) center, (int) orderY), groundPoint3 = new Point(190, orderY);
-    private boolean orderedHorizontal = false;
-    private boolean orderedVertical = false;
-    private boolean scaled = false;
-    private boolean assigned = false;
-    private boolean shifted = false;
-    private boolean horizontaled = false;
-    private boolean discaledVertical = false;
-    private boolean discaledHorizonal = false;
-    private boolean nuclearReady = false;
+    private boolean orderedHorizontalGround = false;
+    private boolean orderedVerticalGround = false;
+    private boolean scaledGround = false;
+    private boolean assignedGround = false;
+    private boolean shiftedGround = false;
+    private boolean horizontaledGround = false;
+    private boolean discaledVerticalGround = false;
+    private boolean discaledHorizonalGround = false;
+    private boolean startGround = false;
+    private boolean airPoint1Ready = false;
+    private VehicleType airPoint1Vehicle = null;
+    private boolean airPoint2Ready = false;
+    private boolean orderedVerticalAir = false;
+    private boolean assignedAir = false;
+    private boolean shiftedAir = false;
+    private boolean horizontaledAir = false;
+    private boolean discaledVerticalAir = false;
+    private boolean discaledHorizonalAir = false;
+    private boolean startAir = false;
+    private boolean nuclearReadyGroundFlag = false;
+    private boolean nuclearReadyAirFlag = true;
     private boolean nuclearReadyAir = false;
     private boolean nuclearReadyGround = false;
-    private boolean start = false;
+    private int nuclearGroup = AIR;
     private boolean fighterSelected = false;
     private int fighterSelectedTick = 0;
     private boolean init = false;
-    private boolean battleScaling = false;
-    private boolean battleRotating = false;
-    private boolean battleDiscaling = false;
-    private boolean nuclearScale = false;
-    private boolean nuclearDiscale = false;
-    private int battleMovingGroup = 0;
+    private boolean battleScalingAir = false;
+    private boolean battleRotatingAir = false;
+    private boolean battleDiscalingAir = false;
+    private boolean nuclearScaleAir = false;
+    private boolean nuclearDiscaleAir = false;
+    private boolean battleScalingGround = false;
+    private boolean battleRotatingGround = false;
+    private boolean battleDiscalingGround = false;
+    private boolean nuclearScaleGround = false;
+    private boolean nuclearDiscaleGround = false;
     private int selectedGroup = 0;
     private double factor = 1.1;
+    private boolean orderV2 = false;
 
     /**
      * Основной метод стратегии, осуществляющий управление армией. Вызывается каждый тик.
@@ -92,95 +115,35 @@ public final class MyStrategy implements Strategy {
         if (me.getRemainingActionCooldownTicks() > 0) {
             return;
         }
-        if (nuclearScale) {
-            if (!fireInTheHole(world.getOpponentPlayer())) {
-                executeDelayedMove();
-                nuclearScale = false;
-            }
-            return;
-        }
-        if (nuclearDiscale) {
-            if (enough(battleMovingGroup)) {
-                executeDelayedMove();
-                nuclearDiscale = false;
-            }
-            return;
-        }
-
-        if (nuclearReadyGround) {
-            if (enough(GROUND)) {
-                executeDelayedMove();
-                nuclearReadyGround = false;
-            }
-            return;
-        }
-
-        if (nuclearReadyAir) {
-            if (enough(AIR)) {
-                executeDelayedMove();
-                nuclearReadyAir = false;
-            }
-            return;
-        }
-
-        if (battleScaling) {
-            if (enough(battleMovingGroup)) {
-                executeDelayedMove();
-                battleScaling = false;
-            }
-            return;
-        }
-        if (battleRotating) {
-            if (enough(battleMovingGroup)) {
-                executeDelayedMove();
-                battleRotating = false;
-            }
-            return;
-        }
-        if (battleDiscaling) {
-            if (enough(battleMovingGroup)) {
-                executeDelayedMove();
-                battleDiscaling = false;
-            }
-            return;
-        }
 
         if (executeDelayedMove()) {
             return;
         }
 
-        ready();
-        if (start) {
-            if (fireInTheHole(world.getOpponentPlayer())) {
-                Point enemyNuclearSrtike = new Point(world.getOpponentPlayer().getNextNuclearStrikeX(), world.getOpponentPlayer().getNextNuclearStrikeY());
-                if (distance(enemyNuclearSrtike, groundMass) < 20 + game.getTacticalNuclearStrikeRadius() && distance(enemyNuclearSrtike, airMass) < 20 + game.getTacticalNuclearStrikeRadius()) {
-                    selectVehicleType(null);
-                    nuclearEnemyAttack(enemyNuclearSrtike, GROUND);
-                } else {
-                    if (distance(enemyNuclearSrtike, airMass) < 20 + game.getTacticalNuclearStrikeRadius()) {
-                        if (selectedGroup != AIR) {
-                            selectGroup(AIR);
-                        }
-                        nuclearEnemyAttack(enemyNuclearSrtike, AIR);
-                    }
-                    if (distance(enemyNuclearSrtike, groundMass) < 20 + game.getTacticalNuclearStrikeRadius()) {
-                        if (selectedGroup != GROUND) {
-                            selectGroup(GROUND);
-                        }
-                        nuclearEnemyAttack(enemyNuclearSrtike, GROUND);
-                    }
-                }
-                executeDelayedMove();
-                return;
-            }
-            if (!nuclearAttack()) {
-                go();
-            }
-        } else {
-            nuclearAttack();
-        }
+        readyAir();
+        readyGround();
+        nuclearAttack();
+        nuclearReady();
 
+        if (!nuclearEnemyAvoid()) {
+            if (startAir && airDeq.size() == 0 && ping()) {
+                goAir();
+            }
+            if (startGround && groundDeq.size() == 0 && ping()) {
+                buildVehicles();
+                goGround();
+                assignIndex++;
+                assignIndex %= 25;
+                if (assignIndex == 0) {
+                    assignNewVehicles();
+                }
+            }
+        }
         executeDelayedMove();
+    }
+
+    private boolean ping() {
+        return world.getTickIndex() % ping == 0;
     }
 
     /**
@@ -214,6 +177,8 @@ public final class MyStrategy implements Strategy {
                 updateTickByVehicleId.put(vehicle.getId(), world.getTickIndex());
             }
         }
+        System.out.println(world.getTickIndex());
+        facilities = Arrays.stream(world.getFacilities()).collect(Collectors.toList());
 
         for (VehicleUpdate vehicleUpdate : world.getVehicleUpdates()) {
             long vehicleId = vehicleUpdate.getId();
@@ -236,7 +201,7 @@ public final class MyStrategy implements Strategy {
         ifvMass = getMassOfVehicle(Ownership.ALLY, IFV);
         fighterMass = getMassOfVehicle(Ownership.ALLY, FIGHTER);
         arrvMass = getMassOfVehicle(Ownership.ALLY, ARRV);
-        groundMass = getMassOfVehicle(Ownership.ALLY, ARRV, TANK, IFV);
+        groundMass = getMassOfVehicle(Ownership.ALLY, TANK, ARRV);
         airMass = getMassOfVehicle(Ownership.ALLY, HELICOPTER, FIGHTER);
 
         if (!init) {
@@ -286,18 +251,151 @@ public final class MyStrategy implements Strategy {
         }
     }
 
+    Consumer<Move> getMove() {
+        Consumer<Move> delayedMove = nuclearDeq.poll();
+        if (delayedMove != null) {
+            return delayedMove;
+        }
+
+        if (startAir && startGround) {
+            if (selectedGroup == AIR) {
+                if (canExecAir()) {
+                    return airDeq.poll();
+                } else {
+                    if (canExecGround()) {
+                        return selectGroup(GROUND);
+                    }
+                    return null;
+                }
+            } else {
+                if (canExecGround()) {
+                    return groundDeq.poll();
+                } else {
+                    if (canExecAir()) {
+                        return selectGroup(AIR);
+                    }
+                    return null;
+                }
+            }
+        } else {
+            if (canExecAir()) {
+                if (selectedGroup == AIR) {
+                    return airDeq.poll();
+                } else {
+                    return selectGroup(AIR);
+                }
+            } else {
+                if (canExecGround()) {
+                    if (selectedGroup == GROUND) {
+                        return groundDeq.poll();
+                    } else {
+                        return selectGroup(GROUND);
+                    }
+                }
+            }
+        }
+        return facilityDeq.poll();
+    }
+
     /**
      * Достаём отложенное действие из очереди и выполняем его.
      *
      * @return Возвращает {@code true}, если и только если отложенное действие было найдено и выполнено.
      */
     private boolean executeDelayedMove() {
-        Consumer<Move> delayedMove = delayedMoves.poll();
-        if (delayedMove == null) {
+        Consumer<Move> delayedMove = getMove();
+
+        if (delayedMove == null && airDeq.size() == 0 && groundDeq.size() == 0) {
             return false;
         }
 
-        delayedMove.accept(move);
+        if (delayedMove != null) {
+            delayedMove.accept(move);
+        }
+        return true;
+    }
+
+    private boolean canExecAir() {
+        if (airDeq.size() == 0 || (nuclearGroup == AIR && fireInTheHole(me))) {
+            return false;
+        }
+
+        if (nuclearScaleAir) {
+            if (!fireInTheHole(world.getOpponentPlayer())) {
+                nuclearScaleAir = false;
+                return true;
+            }
+            return false;
+        }
+
+        if (nuclearDiscaleAir || battleScalingAir || battleRotatingAir || battleDiscalingAir || nuclearReadyAir) {
+            if (enough(AIR)) {
+                if (nuclearDiscaleAir) {
+                    nuclearDiscaleAir = false;
+                    return true;
+                }
+                if (battleScalingAir) {
+                    battleScalingAir = false;
+                    return true;
+                }
+                if (battleRotatingAir) {
+                    battleRotatingAir = false;
+                    return true;
+                }
+                if (battleDiscalingAir) {
+                    battleDiscalingAir = false;
+                    return true;
+                }
+                if (nuclearReadyAir) {
+                    nuclearReadyAir = false;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean canExecGround() {
+        if (groundDeq.size() == 0 || (nuclearGroup == GROUND && fireInTheHole(me))) {
+            return false;
+        }
+
+        if (nuclearScaleGround) {
+            if (!fireInTheHole(world.getOpponentPlayer())) {
+                nuclearScaleGround = false;
+                return true;
+            }
+            return false;
+        }
+
+        if (nuclearDiscaleGround || battleScalingGround || battleRotatingGround || battleDiscalingGround || nuclearReadyGround) {
+            if (enough(GROUND)) {
+                if (nuclearDiscaleGround) {
+                    nuclearDiscaleGround = false;
+                    return true;
+                }
+                if (battleScalingGround) {
+                    battleScalingGround = false;
+                    return true;
+                }
+                if (battleRotatingGround) {
+                    battleRotatingGround = false;
+                    return true;
+                }
+                if (battleDiscalingGround) {
+                    battleDiscalingGround = false;
+                    return true;
+                }
+                if (nuclearReadyGround) {
+                    nuclearReadyGround = false;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         return true;
     }
 
@@ -326,10 +424,74 @@ public final class MyStrategy implements Strategy {
         );
     }
 
-    private void ready() {
-        if (!orderedHorizontal) {
-            double air1 = Math.max(Math.abs(airPoint1.x - helicopterMass.x) / (game.getHelicopterSpeed() * 0.6), Math.abs(airPoint2.x - fighterMass.x) / (game.getFighterSpeed() * 0.6));
-            double air2 = Math.max(Math.abs(airPoint2.x - helicopterMass.x) / (game.getHelicopterSpeed() * 0.6), Math.abs(airPoint1.x - fighterMass.x) / (game.getFighterSpeed() * 0.6));
+    private void readyAir() {
+        if (!airPoint1Ready) {
+            Point p;
+            Point minFighter = getMinVehicle(FIGHTER);
+            Point minHelicopter = getMinVehicle(HELICOPTER);
+            if (distance(minFighter, airPoint2) < distance(minHelicopter, airPoint2)) {
+                selectVehicleType(airDeq, FIGHTER);
+                p = getMinVehicle(FIGHTER);
+                airPoint1Vehicle = FIGHTER;
+            } else {
+                selectVehicleType(airDeq, HELICOPTER);
+                p = getMinVehicle(HELICOPTER);
+                airPoint1Vehicle = HELICOPTER;
+            }
+            scale(airDeq, new Point(p.x - (airPoint2.x - p.x), p.y - (airPoint2.y - p.y)), 2);
+            airPoint1Ready = true;
+            return;
+        }
+        if (!airPoint2Ready && enough(AIR)) {
+            Point p;
+            if (airPoint1Vehicle == HELICOPTER) {
+                selectVehicleType(airDeq, FIGHTER);
+                p = getMinVehicle(FIGHTER);
+                airPoint1Vehicle = FIGHTER;
+            } else {
+                selectVehicleType(airDeq, HELICOPTER);
+                p = getMinVehicle(HELICOPTER);
+                airPoint1Vehicle = HELICOPTER;
+            }
+            scale(airDeq, new Point(p.x - (airPoint1.x - p.x), p.y - (airPoint1.y - p.y)), 2);
+            airPoint2Ready = true;
+            return;
+        }
+
+        if (!orderedVerticalAir && enough(AIR)) {
+            Point airCenter = new Point(airPoint2.x, (airPoint1.y + airPoint2.y) / 2);
+            selectVehicleType(airDeq, FIGHTER);
+            moveVertical(airDeq, fighterMass, airCenter, game.getFighterSpeed() * 0.6);
+            selectVehicleType(airDeq, HELICOPTER);
+            moveVertical(airDeq, helicopterMass, airCenter, game.getHelicopterSpeed() * 0.6);
+            orderedVerticalAir = true;
+            return;
+        }
+
+        if (!discaledVerticalAir && enough(AIR)) {
+            int shift = 0;
+            List<Integer> rowList = getRowList(HELICOPTER, FIGHTER);
+            rowList.sort(Integer::compareTo);
+            double center = rowList.get(5);
+            for (int row : rowList) {
+                selectRow(airDeq, row, AIR);
+                deselectGroup(airDeq, GROUND);
+                moveVector(airDeq, new Point(shift == 0 ? 2 : 0, (center - row) / 2), game.getTankSpeed() * 0.6);
+                shift = ++shift % 2;
+            }
+            discaledVerticalAir = true;
+            return;
+        }
+
+        if (!startAir) {
+            if (enough(AIR)) {
+                startAir = true;
+            }
+        }
+    }
+
+    private void readyGround() {
+        if (!orderedHorizontalGround) {
             double ground1 = Math.max(Math.abs(groundPoint1.x - tankMass.x) / (game.getTankSpeed() * 0.6), Math.max(Math.abs(groundPoint2.x - ifvMass.x) / (game.getIfvSpeed() * 0.6), Math.abs(groundPoint3.x - arrvMass.x) / (game.getArrvSpeed() * 0.6)));
             double ground2 = Math.max(Math.abs(groundPoint1.x - tankMass.x) / (game.getTankSpeed() * 0.6), Math.max(Math.abs(groundPoint3.x - ifvMass.x) / (game.getIfvSpeed() * 0.6), Math.abs(groundPoint2.x - arrvMass.x) / (game.getArrvSpeed() * 0.6)));
             double ground3 = Math.max(Math.abs(groundPoint2.x - tankMass.x) / (game.getTankSpeed() * 0.6), Math.max(Math.abs(groundPoint1.x - ifvMass.x) / (game.getIfvSpeed() * 0.6), Math.abs(groundPoint3.x - arrvMass.x) / (game.getArrvSpeed() * 0.6)));
@@ -337,17 +499,6 @@ public final class MyStrategy implements Strategy {
             double ground5 = Math.max(Math.abs(groundPoint3.x - tankMass.x) / (game.getTankSpeed() * 0.6), Math.max(Math.abs(groundPoint1.x - ifvMass.x) / (game.getIfvSpeed() * 0.6), Math.abs(groundPoint2.x - arrvMass.x) / (game.getArrvSpeed() * 0.6)));
             double ground6 = Math.max(Math.abs(groundPoint3.x - tankMass.x) / (game.getTankSpeed() * 0.6), Math.max(Math.abs(groundPoint2.x - ifvMass.x) / (game.getIfvSpeed() * 0.6), Math.abs(groundPoint1.x - arrvMass.x) / (game.getArrvSpeed() * 0.6)));
             double groundMinDist = Math.min(Math.min(Math.min(Math.min(Math.min(ground1, ground2), ground3), ground4), ground5), ground6);
-            if (air1 == Math.min(air1, air2)) {
-                selectVehicleType(HELICOPTER);
-                moveHorizontal(helicopterMass, airPoint1, game.getHelicopterSpeed() * 0.6);
-                selectVehicleType(FIGHTER);
-                moveHorizontal(fighterMass, airPoint2, game.getFighterSpeed() * 0.6);
-            } else {
-                selectVehicleType(HELICOPTER);
-                moveHorizontal(helicopterMass, airPoint2, game.getHelicopterSpeed() * 0.6);
-                selectVehicleType(FIGHTER);
-                moveHorizontal(fighterMass, airPoint1, game.getFighterSpeed() * 0.6);
-            }
             if (ground1 == groundMinDist) {
                 horizontalGroundMove(groundPoint1, groundPoint2, groundPoint3);
             }
@@ -366,130 +517,138 @@ public final class MyStrategy implements Strategy {
             if (ground6 == groundMinDist) {
                 horizontalGroundMove(groundPoint3, groundPoint2, groundPoint1);
             }
-            orderedHorizontal = true;
+            orderedHorizontalGround = true;
             return;
         }
-        if (!orderedVertical && enough(GROUND) && enough(AIR)) {
-            selectVehicleType(FIGHTER);
-            moveVertical(fighterMass, airPoint1, game.getFighterSpeed() * 0.6);
-            selectVehicleType(HELICOPTER);
-            moveVertical(helicopterMass, airPoint2, game.getHelicopterSpeed() * 0.6);
+        if (!orderedVerticalGround && enough(GROUND)) {
             verticalGroundMove(groundPoint1, groundPoint2, groundPoint3);
-            orderedVertical = true;
+            orderedVerticalGround = true;
             return;
         }
 
-        if (!scaled && enough(GROUND) && enough(AIR)) {
+        if (!scaledGround && enough(GROUND)) {
             for (int row : getRowList(ARRV)) {
-                selectRow(row);
-                shiftVertical(((row - orderY) * 2));
+                selectRow(groundDeq, row, GROUND);
+                deselectGroup(groundDeq, AIR);
+                shiftVertical(groundDeq, (row - orderY) * 2);
             }
-            scaled = true;
+            scaledGround = true;
             return;
         }
-        if (!shifted && enough(GROUND) && enough(AIR)) {
-            selectVehicleType(TANK);
-            shiftVertical(5);
-            selectVehicleType(IFV);
-            shiftVertical(-5);
-            selectVehicleType(FIGHTER);
-            shiftVertical(5);
-            shifted = true;
+
+        if (!shiftedGround && enough(GROUND)) {
+            selectVehicleType(groundDeq, TANK);
+            shiftVertical(groundDeq, 6);
+            selectVehicleType(groundDeq, IFV);
+            shiftVertical(groundDeq, -6);
+            shiftedGround = true;
             return;
         }
-        if (enough(GROUND) && enough(AIR) && !horizontaled) {
-            selectVehicleType(TANK);
-            moveHorizontal(tankMass, groundPoint2, game.getTankSpeed() * 0.6);
-            selectVehicleType(IFV);
-            moveHorizontal(ifvMass, groundPoint2, game.getIfvSpeed() * 0.6);
-            selectVehicleType(ARRV);
-            moveHorizontal(arrvMass, groundPoint2, game.getArrvSpeed() * 0.6);
-            selectVehicleType(HELICOPTER);
-            moveHorizontal(helicopterMass, groundPoint2, game.getHelicopterSpeed() * 0.6);
-            selectVehicleType(FIGHTER);
-            moveHorizontal(fighterMass, groundPoint2, game.getFighterSpeed() * 0.6);
-            horizontaled = true;
+        if (!horizontaledGround && enough(GROUND)) {
+            selectVehicleType(groundDeq, TANK);
+            moveHorizontal(groundDeq, tankMass, groundPoint2, game.getTankSpeed() * 0.6);
+            selectVehicleType(groundDeq, IFV);
+            moveHorizontal(groundDeq, ifvMass, groundPoint2, game.getIfvSpeed() * 0.6);
+            selectVehicleType(groundDeq, ARRV);
+            moveHorizontal(groundDeq, arrvMass, groundPoint2, game.getArrvSpeed() * 0.6);
+            horizontaledGround = true;
 
             return;
         }
 
-        if (!discaledVertical && enough(GROUND) && enough(AIR)) {
-            for (int row : getRowList(ARRV, TANK, IFV, HELICOPTER, FIGHTER)) {
-                selectRow(row);
-                moveVector(new Point(0, -(row - orderY) / 2), game.getTankSpeed() * 0.6);
+        if (!discaledVerticalGround && enough(GROUND)) {
+            for (int row : getRowList(ARRV, TANK, IFV)) {
+                selectRow(groundDeq, row, GROUND);
+                deselectGroup(groundDeq, AIR);
+                moveVector(groundDeq, new Point(0, -(row - orderY) / 2), game.getTankSpeed() * 0.6);
             }
-            discaledVertical = true;
+            discaledVerticalGround = true;
             return;
         }
-        if (!discaledHorizonal && enough(GROUND) && enough(AIR)) {
+        if (!discaledHorizonalGround && enough(GROUND)) {
             boolean shift = false;
-            List<Integer> columns = getColumnList(ARRV, TANK, IFV, HELICOPTER, FIGHTER);
-            Collections.sort(columns);
+            List<Integer> columns = getColumnList(ARRV, TANK, IFV);
+            columns.sort(Integer::compareTo);
             for (int column : columns) {
-                selectColumn(column);
-                moveVector(new Point((-(column - center) / 2), shift ? -5 : 0), game.getTankSpeed() * 0.6);
+                selectColumn(groundDeq, column, GROUND);
+                deselectGroup(groundDeq, AIR);
+                moveVector(groundDeq, new Point((-(column - center) / 2), shift ? 2 : 0), game.getTankSpeed() * 0.6);
                 shift = !shift;
             }
-            discaledHorizonal = true;
+            discaledHorizonalGround = true;
             return;
         }
 
-        if (start && world.getOpponentPlayer().getRemainingNuclearStrikeCooldownTicks() < 100 && !nuclearReady) {
-            selectGroup(AIR);
-            scale(airMass, 1.25, AIR);
-            selectGroup(GROUND);
-            scale(groundMass, 1.25, GROUND);
-            nuclearReady = true;
+        if (!startGround && enough(GROUND)) {
+            startGround = true;
         }
+    }
 
-        if (start && world.getOpponentPlayer().getRemainingNuclearStrikeCooldownTicks() > 100 && nuclearReady && !fireInTheHole(world.getOpponentPlayer())) {
-            selectGroup(AIR);
-            scale(airMass, 0.1, AIR);
-            selectGroup(GROUND);
-            scale(groundMass, 0.1, GROUND);
-            nuclearReady = false;
-        }
-
-        if (!start) {
-            if (enough(GROUND) && enough(AIR)) {
-                start = true;
-                fighterSelected = true;
+    private Point getMinVehicle(VehicleType type) {
+        final double[] x = {9999};
+        final double[] y = {9999};
+        streamVehicles(Ownership.ALLY, type).forEach((v) ->
+        {
+            if (v.getX() <= x[0]) {
+                x[0] = v.getX();
             }
-        }
+            if (v.getY() <= y[0]) {
+                y[0] = v.getY();
+            }
+        });
+        return new Point(x[0], y[0]);
     }
 
     private void setGroups() {
         for (VehicleType type : VehicleType.values()) {
-            selectVehicleType(type);
-            assign(type == HELICOPTER || type == FIGHTER ? AIR : GROUND);
+            selectVehicleType(airDeq, type);
+            assign(airDeq, type == HELICOPTER || type == FIGHTER ? AIR : GROUND);
         }
     }
 
-    private void assign(int group) {
-        delayedMoves.add((move) ->
+    private void assign(Queue<Consumer<Move>> deq, int group) {
+        deq.add((move) ->
         {
             move.setAction(ActionType.ASSIGN);
             move.setGroup(group);
         });
     }
 
-    private void selectRow(int y) {
-        delayedMoves.add((move) ->
+    private void selectRow(Queue<Consumer<Move>> deq, int y, int group) {
+        deq.add((move) ->
         {
             move.setAction(ActionType.CLEAR_AND_SELECT);
             move.setRight(world.getWidth());
             move.setTop(y - 1);
             move.setBottom(y + 1);
+            selectedGroup = group;
         });
     }
 
-    private void selectColumn(int x) {
-        delayedMoves.add((move) ->
+    private void selectColumn(Queue<Consumer<Move>> deq, int x, int group) {
+        deq.add((move) ->
         {
             move.setAction(ActionType.CLEAR_AND_SELECT);
             move.setBottom(world.getHeight());
-            move.setRight(x + 1);
-            move.setLeft(x - 1);
+            move.setRight(x + 3);
+            move.setLeft(x - 3);
+            selectedGroup = group;
+        });
+    }
+
+    private void deselectGroup(Queue<Consumer<Move>> deq, int group) {
+        deq.add((move) ->
+        {
+            move.setAction(ActionType.DESELECT);
+            move.setGroup(group);
+        });
+    }
+
+    private void deselectVehicleType(Queue<Consumer<Move>> deq) {
+        deq.add((move) ->
+        {
+            move.setAction(ActionType.DESELECT);
+            move.setVehicleType(IFV);
         });
     }
 
@@ -504,37 +663,39 @@ public final class MyStrategy implements Strategy {
     }
 
     private void verticalGroundMove(Point p1, Point p2, Point p3) {
-        selectVehicleType(TANK);
-        moveVertical(tankMass, p1, game.getTankSpeed() * 0.6);
-        selectVehicleType(IFV);
-        moveVertical(ifvMass, p2, game.getIfvSpeed() * 0.6);
-        selectVehicleType(ARRV);
-        moveVertical(arrvMass, p3, game.getArrvSpeed() * 0.6);
+        selectVehicleType(groundDeq, TANK);
+        moveVertical(groundDeq, tankMass, p1, game.getTankSpeed() * 0.6);
+        selectVehicleType(groundDeq, IFV);
+        moveVertical(groundDeq, ifvMass, p2, game.getIfvSpeed() * 0.6);
+        selectVehicleType(groundDeq, ARRV);
+        moveVertical(groundDeq, arrvMass, p3, game.getArrvSpeed() * 0.6);
     }
 
     private void horizontalGroundMove(Point p1, Point p2, Point p3) {
-        selectVehicleType(TANK);
-        moveHorizontal(tankMass, p1, game.getTankSpeed() * 0.6);
-        selectVehicleType(IFV);
-        moveHorizontal(ifvMass, p2, game.getIfvSpeed() * 0.6);
-        selectVehicleType(ARRV);
-        moveHorizontal(arrvMass, p3, game.getArrvSpeed() * 0.6);
+        selectVehicleType(groundDeq, TANK);
+        moveHorizontal(groundDeq, tankMass, p1, game.getTankSpeed() * 0.6);
+        selectVehicleType(groundDeq, IFV);
+        moveHorizontal(groundDeq, ifvMass, p2, game.getIfvSpeed() * 0.6);
+        selectVehicleType(groundDeq, ARRV);
+        moveHorizontal(groundDeq, arrvMass, p3, game.getArrvSpeed() * 0.6);
     }
 
 
-    private void moveFromTo(Point from, Point to, Double maxSpeed) {
-        delayedMoves.add(move ->
+    private void moveFromTo(Queue<Consumer<Move>> deq, Point from, Point to, Double maxSpeed) {
+        deq.add(move ->
         {
+            double edgeX = Math.min(Math.max(50, to.getX()), world.getWidth() - 50);
+            double edgeY = Math.min(Math.max(50, to.getY()), world.getHeight() - 50);
             move.setAction(ActionType.MOVE);
-            move.setX(to.getX() - from.getX());
-            move.setY(to.getY() - from.getY());
+            move.setX(edgeX - from.getX());
+
+            move.setY(edgeY - from.getY());
             move.setMaxSpeed(maxSpeed);
         });
     }
 
-    private void moveHorizontal(Point from, Point to, Double maxSpeed) {
-
-        delayedMoves.add(move ->
+    private void moveHorizontal(Queue<Consumer<Move>> deq, Point from, Point to, Double maxSpeed) {
+        deq.add(move ->
         {
             move.setAction(ActionType.MOVE);
             move.setX(to.getX() - from.getX());
@@ -549,8 +710,8 @@ public final class MyStrategy implements Strategy {
         });
     }
 
-    private void moveVertical(Point from, Point to, Double maxSpeed) {
-        delayedMoves.add(move ->
+    private void moveVertical(Queue<Consumer<Move>> deq, Point from, Point to, Double maxSpeed) {
+        deq.add(move ->
         {
             move.setAction(ActionType.MOVE);
             move.setY(to.getY() - from.getY());
@@ -560,22 +721,31 @@ public final class MyStrategy implements Strategy {
         });
     }
 
-    private void shiftVertical(int y) {
-        delayedMoves.add(move ->
+    private void shiftVertical(Queue<Consumer<Move>> deq, int y) {
+        deq.add(move ->
         {
             move.setAction(ActionType.MOVE);
             move.setY(y);
         });
     }
 
-    private void scale(Point from, double factor, Integer group) {
-        delayedMoves.add(move ->
+    private void scale(Queue<Consumer<Move>> deq, Point from, double factor) {
+        deq.add(move ->
         {
             move.setAction(ActionType.SCALE);
             move.setX(from.getX());
             move.setY(from.getY());
             move.setFactor(factor);
-            battleMovingGroup = group;
+        });
+    }
+
+    private void scale(Queue<Consumer<Move>> deq, Point from, double factor, Integer group) {
+        deq.add(move ->
+        {
+            move.setAction(ActionType.SCALE);
+            move.setX(from.getX());
+            move.setY(from.getY());
+            move.setFactor(factor);
             if (group == AIR) {
                 nuclearReadyAir = true;
             } else {
@@ -584,8 +754,8 @@ public final class MyStrategy implements Strategy {
         });
     }
 
-    private void scaleHorizontal(Point from, double factor) {
-        delayedMoves.add(move ->
+    private void scaleHorizontal(Queue<Consumer<Move>> deq, Point from, double factor) {
+        deq.add(move ->
         {
             move.setAction(ActionType.SCALE);
             move.setX(from.getX());
@@ -595,8 +765,8 @@ public final class MyStrategy implements Strategy {
         });
     }
 
-    private void scaleVertical(Point from, double factor) {
-        delayedMoves.add(move ->
+    private void scaleVertical(Queue<Consumer<Move>> deq, Point from, double factor) {
+        deq.add(move ->
         {
             move.setAction(ActionType.SCALE);
             move.setY(from.getY());
@@ -606,67 +776,68 @@ public final class MyStrategy implements Strategy {
         });
     }
 
-    private void nuclearEnemyAttack(Point p, Integer group) {
-        delayedMoves.add(move ->
+    private void nuclearEnemyAvoid(Queue<Consumer<Move>> deq, Point p, int group) {
+        deq.add(move ->
         {
             move.setAction(ActionType.SCALE);
             move.setX(p.getX());
             move.setY(p.getY());
             move.setFactor(10);
-            nuclearScale = true;
-            battleMovingGroup = group;
+            if (group == AIR) {
+                nuclearScaleAir = true;
+            } else {
+                nuclearScaleGround = true;
+            }
         });
-        delayedMoves.add(move ->
+        deq.add(move ->
         {
             move.setAction(ActionType.SCALE);
             move.setX(p.getX());
             move.setY(p.getY());
             move.setFactor(0.1);
-            nuclearDiscale = true;
-            battleMovingGroup = group;
+            if (group == AIR) {
+                nuclearDiscaleAir = true;
+            } else {
+                nuclearDiscaleGround = true;
+            }
+        });
+        deq.add(move ->
+        {
+            move.setAction(ActionType.SCALE);
+            move.setX(p.getX());
+            move.setY(p.getY());
+            move.setFactor(1.1);
+            if (group == AIR) {
+                nuclearDiscaleAir = true;
+                nuclearReadyAirFlag = false;
+            } else {
+                nuclearReadyGroundFlag = false;
+                nuclearDiscaleGround = true;
+            }
         });
     }
 
-    private void rotateAround(Point p, double angle, double factor, int group) {
-        if (!nuclearReady) {
-            delayedMoves.add(move ->
-            {
-                move.setAction(ActionType.SCALE);
-                move.setX(p.getX());
-                move.setY(p.getY());
-                move.setFactor(factor);
-                battleScaling = true;
-                battleMovingGroup = group;
-            });
-        }
-        delayedMoves.add(move ->
+    private void rotateAround(Queue<Consumer<Move>> deq, Point p, double angle, double factor, int group) {
+        deq.add(move ->
         {
             move.setAction(ActionType.ROTATE);
             move.setX(p.getX());
             move.setY(p.getY());
             move.setAngle(angle);
-            battleRotating = true;
-            battleMovingGroup = group;
+            if (group == AIR) {
+                battleRotatingAir = true;
+            } else {
+                battleRotatingGround = true;
+            }
         });
-        if (!nuclearReady) {
-            delayedMoves.add(move ->
-            {
-                move.setAction(ActionType.SCALE);
-                move.setX(p.getX());
-                move.setY(p.getY());
-                move.setFactor(1 / factor);
-                battleDiscaling = true;
-                battleMovingGroup = group;
-            });
-        }
     }
 
     private double getDistance(Point p1, Point p2) {
         return Math.sqrt((p1.getX() - p2.getX()) * (p1.getX() - p2.getX()) + (p1.getY() - p2.getY()) * (p1.getY() - p2.getY()));
     }
 
-    private void selectVehicleType(VehicleType vehicleType) {
-        delayedMoves.add(move ->
+    private void selectVehicleType(Queue<Consumer<Move>> deq, VehicleType vehicleType) {
+        deq.add(move ->
         {
             move.setAction(ActionType.CLEAR_AND_SELECT);
             move.setRight(world.getWidth());
@@ -676,17 +847,6 @@ public final class MyStrategy implements Strategy {
             } else {
                 selectedGroup = 0;
             }
-        });
-    }
-
-    private void select(double left, double right, double top, double bottom) {
-        delayedMoves.add(move ->
-        {
-            move.setAction(ActionType.CLEAR_AND_SELECT);
-            move.setRight(right);
-            move.setLeft(left);
-            move.setBottom(bottom);
-            move.setTop(top);
         });
     }
 
@@ -709,8 +869,8 @@ public final class MyStrategy implements Strategy {
         return Math.sqrt((p1.getX() - p2.getX()) * (p1.getX() - p2.getX()) + (p1.getY() - p2.getY()) * (p1.getY() - p2.getY()));
     }
 
-    private void moveVector(Point p, double maxSpeed) {
-        delayedMoves.add(move ->
+    private void moveVector(Queue<Consumer<Move>> deq, Point p, double maxSpeed) {
+        deq.add(move ->
         {
             move.setAction(ActionType.MOVE);
             move.setX(p.x);
@@ -719,46 +879,20 @@ public final class MyStrategy implements Strategy {
         });
     }
 
-    private void selectGroup(int group) {
-        delayedMoves.add(move ->
+    private Consumer<Move> selectGroup(int group) {
+        return move ->
         {
             move.setAction(ActionType.CLEAR_AND_SELECT);
             move.setRight(world.getWidth());
             move.setBottom(world.getHeight());
             move.setGroup(group);
             selectedGroup = group;
-        });
+        };
     }
 
     /**
      * Основная логика нашей стратегии.
      */
-    private void go() {
-        if (fireInTheHole(world.getMyPlayer())) {
-            return;
-        }
-        if (world.getTickIndex() % ping == 0) {
-
-            if (selectedGroup == AIR) {
-                goAir();
-                selectGroup(GROUND);
-                goGround();
-            } else {
-                if (selectedGroup == GROUND) {
-                    goGround();
-                    selectGroup(AIR);
-                    goAir();
-                } else {
-                    selectGroup(GROUND);
-                    goGround();
-                    selectGroup(AIR);
-                    goAir();
-                }
-            }
-
-        }
-    }
-
     private Point getTargetMass(Point p) {
         double x = 0;
         double y = 0;
@@ -768,34 +902,74 @@ public final class MyStrategy implements Strategy {
             if (v.getDistanceTo(p.x, p.y) < 100) {
                 x += p.x;
                 y += p.y;
-                count ++;
+                count++;
             }
         }
         return new Point(x / count, y / count);
     }
 
-    private void goGround() {
-        boolean bigTarget = isBigTarget(nearestGroundEnemy);
-        if (bigTarget) {
-            Point targetMass = getTargetMass(nearestGroundEnemy);
-            double angleToTurn = getAngleToEnemy(GROUND, targetMass);
-            if (Math.abs(angleToTurn) > Math.PI / 10 && distance(groundMass, targetMass) > 50) {
-                rotateAround(groundMass, angleToTurn, factor, GROUND);
-                groundVector = turnVector(groundVector, angleToTurn);
-                return;
+    public boolean nuclearEnemyAvoid() {
+        if (!fireInTheHole(world.getOpponentPlayer())) {
+            return false;
+        }
+
+        Point enemyNuclearSrtike = new Point(world.getOpponentPlayer().getNextNuclearStrikeX(), world.getOpponentPlayer().getNextNuclearStrikeY());
+        if (distance(enemyNuclearSrtike, groundMass) < 20 + game.getTacticalNuclearStrikeRadius()) {
+            nuclearEnemyAvoid(groundDeq, enemyNuclearSrtike, GROUND);
+        }
+
+        if (distance(enemyNuclearSrtike, airMass) < 20 + game.getTacticalNuclearStrikeRadius()) {
+            nuclearEnemyAvoid(airDeq, enemyNuclearSrtike, AIR);
+        }
+
+        return true;
+    }
+
+    private Point getFacility(int group) {
+        if (facilities == null) {
+            return null;
+        }
+        Point mass = group == GROUND ? groundMass : airMass;
+        Facility nearest = null;
+        double dist = 99999;
+        for (Facility f : facilities) {
+            if (f.getOwnerPlayerId() != me.getId() && (distance(new Point(f.getLeft(), f.getTop()), mass) < dist)) {
+                nearest = f;
+                dist = distance(new Point(f.getLeft() + 20, f.getTop() + 20), mass);
             }
         }
-        if (!bigTarget) {
-            moveFromTo(groundMass, nearestGroundEnemy, game.getTankSpeed() * 0.6);
-        } else {
-            double dist = distance(groundMass, nearestGroundEnemy);
-            if (getEnemyAround(nearestGroundEnemy, game.getTacticalNuclearStrikeRadius() * 2) > streamVehicles(Ownership.ALLY).count() * 0.8 && distanceToTheEdge(groundMass) > 100) {
-                Point target = new Point(groundMass.getX() + (nearestGroundEnemy.getX() - groundMass.getX()) / dist * (dist - game.getFighterVisionRange() * 1.2 - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()),
-                        groundMass.getY() + (nearestGroundEnemy.getY() - groundMass.getY()) / dist * (dist - game.getFighterVisionRange() * 1.2 - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()));
-                moveFromTo(groundMass, target, game.getTankSpeed() * 0.6);
-            } else {
-                moveFromTo(groundMass, nearestGroundEnemy, game.getTankSpeed() * 0.6);
+        if (nearest == null) {
+            return null;
+        }
+        return new Point(nearest.getLeft() + 20, nearest.getTop() + 20);
+    }
+
+    private void goGround() {
+        if (getFacility(GROUND) == null || (isBigTarget(nearestGroundEnemy, 100) && distance(nearestGroundEnemy, groundMass) < 100)) {
+            boolean bigTarget = isBigTarget(nearestGroundEnemy, 35);
+            if (bigTarget) {
+                Point targetMass = getTargetMass(nearestGroundEnemy);
+                double angleToTurn = getAngleToEnemy(GROUND, targetMass);
+                if (Math.abs(angleToTurn) > Math.PI / 10 && distance(groundMass, targetMass) > 40) {
+                    rotateAround(groundDeq, groundMass, angleToTurn, factor, GROUND);
+                    groundVector = turnVector(groundVector, angleToTurn);
+                    return;
+                }
             }
+            if (!bigTarget) {
+                moveFromTo(groundDeq, groundMass, nearestGroundEnemy, game.getTankSpeed() * 0.6);
+            } else {
+                double dist = distance(groundMass, nearestGroundEnemy);
+                if (getEnemyAround(nearestGroundEnemy, game.getTacticalNuclearStrikeRadius() * 2) > streamVehicles(Ownership.ALLY).count() * 0.8 && distanceToTheEdge(groundMass) > 100) {
+                    Point target = new Point(groundMass.getX() + (nearestGroundEnemy.getX() - groundMass.getX()) / dist * (dist - game.getFighterVisionRange() * 1.2 - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()),
+                            groundMass.getY() + (nearestGroundEnemy.getY() - groundMass.getY()) / dist * (dist - game.getFighterVisionRange() * 1.2 - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()));
+                    moveFromTo(groundDeq, groundMass, target, game.getTankSpeed() * 0.6);
+                } else {
+                    moveFromTo(groundDeq, groundMass, nearestGroundEnemy, game.getTankSpeed() * 0.6);
+                }
+            }
+        } else {
+            moveFromTo(groundDeq, groundMass, getFacility(GROUND), game.getTankSpeed() * 0.6);
         }
     }
 
@@ -807,49 +981,98 @@ public final class MyStrategy implements Strategy {
         return (int) streamVehicles(Ownership.ALLY).filter((v) -> v.getGroups()[0] == group).count();
     }
 
+    private void nuclearReady() {
+        if (startGround && world.getOpponentPlayer().getRemainingNuclearStrikeCooldownTicks() < 100 && (!nuclearReadyAirFlag || !nuclearReadyGroundFlag)) {
+            if (!nuclearReadyAirFlag) {
+                scale(airDeq, airMass, 1.25, AIR);
+                nuclearReadyAirFlag = true;
+            }
+            if (!nuclearReadyGroundFlag) {
+                scale(groundDeq, groundMass, 1.25, GROUND);
+                nuclearReadyGroundFlag = true;
+            }
+        }
+    }
+
+    private void buildVehicles() {
+        for (Facility f : facilities) {
+            if (f.getOwnerPlayerId() == me.getId() && f.getVehicleType() != IFV && distance(new Point(f.getLeft() + 20, f.getTop() + 20), groundMass) > 100) {
+                facilityDeq.add(move ->
+                {
+                    move.setAction(ActionType.SETUP_VEHICLE_PRODUCTION);
+                    move.setFacilityId(f.getId());
+                    move.setVehicleType(IFV);
+                });
+            }
+        }
+    }
+
+    private void assignNewVehicles() {
+        selectVehicleType(facilityDeq, IFV);
+        deselectGroup(facilityDeq, GROUND);
+        moveVector(facilityDeq, new Point(0, 6), game.getIfvSpeed());
+        facilityDeq.add(selectGroup(GROUND));
+    }
+
     private void goAir() {
-        if (distance(groundMass, nearestGroundEnemy) < 60 && isBigTarget(nearestGroundEnemy)) {
-            if (distance(groundMass, airMass) < 50) {
-                double angleToTurn = getAngle(airVector, groundVector);
-
-                if (Math.abs(angleToTurn) > Math.PI / 10) {
-                    rotateAround(airMass, angleToTurn, factor, AIR);
-                    airVector = turnVector(airVector, angleToTurn);
-                    return;
-                }
+        if (getFacility(GROUND) != null) {
+            if (distance(groundMass, nearestGroundEnemy) < 200) {
+                airAttack(nearestGroundEnemy);
+                return;
             }
-            moveFromTo(airMass, groundMass, game.getHelicopterSpeed() * 0.6);
+            airSave();
+            return;
+        }
+
+        if (distance(groundMass, nearestGroundEnemy) < 60 && isBigTarget(nearestGroundEnemy, 35)) {
+            airSave();
         } else {
-            if (!isBigTarget(nearestAirEnemy)) {
-                moveFromTo(airMass, nearestAirEnemy, game.getHelicopterSpeed() * 0.6);
-            } else {
+            airAttack(nearestAirEnemy);
+        }
+    }
 
-                double dist = distance(groundMass, nearestAirEnemy);
-                double coeff;
-                if (me.getRemainingNuclearStrikeCooldownTicks() > 100) {
-                    if (distance(airMass, groundMass) < 150 && world.getOpponentPlayer().getRemainingNuclearStrikeCooldownTicks() > 200) {
-                        moveFromTo(airMass, groundMass, game.getHelicopterSpeed() * 0.6);
-                        return;
-                    }
-                    coeff = 1.2;
-                } else {
-                    coeff = 0.6;
-                }
-                Point target = new Point(groundMass.getX() + (nearestAirEnemy.getX() - groundMass.getX()) / dist * (dist - game.getFighterVisionRange() * coeff - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()),
-                        groundMass.getY() + (nearestAirEnemy.getY() - groundMass.getY()) / dist * (dist - game.getFighterVisionRange() * coeff - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()));
+    private void airSave() {
+        if (distance(groundMass, airMass) < 30) {
+            double angleToTurn = getAngle(airVector, groundVector);
 
-                double angleToTurn = getAngleToEnemy(AIR, nearestAirEnemy);
+            if (Math.abs(angleToTurn) > Math.PI / 10) {
+                rotateAround(airDeq, airMass, angleToTurn, factor, AIR);
+                airVector = turnVector(airVector, angleToTurn);
+                return;
+            }
+        }
+        moveFromTo(airDeq, airMass, groundMass, game.getHelicopterSpeed() * 0.6);
+    }
 
-                if (Math.abs(angleToTurn) > Math.PI / 10 && distance(airMass, nearestAirEnemy) > 30) {
-                    rotateAround(airMass, angleToTurn, factor, AIR);
-                    airVector = turnVector(airVector, angleToTurn);
+    private void airAttack(Point p) {
+        if (!isBigTarget(p, 35)) {
+            moveFromTo(airDeq, airMass, p, game.getHelicopterSpeed() * 0.6);
+        } else {
+            double dist = distance(groundMass, p);
+            double coeff;
+            if (me.getRemainingNuclearStrikeCooldownTicks() > 100) {
+                if (distance(airMass, groundMass) < 150 && world.getOpponentPlayer().getRemainingNuclearStrikeCooldownTicks() > 200) {
+                    moveFromTo(airDeq, airMass, groundMass, game.getHelicopterSpeed() * 0.6);
                     return;
                 }
-
-                moveFromTo(new Point(airMass.getX(), airMass.getY()),
-                        target,
-                        game.getHelicopterSpeed() * 0.6);
+                coeff = 1.2;
+            } else {
+                coeff = 0.6;
             }
+            Point target = new Point(groundMass.getX() + (p.getX() - groundMass.getX()) / dist * (dist - game.getFighterVisionRange() * coeff - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()),
+                    groundMass.getY() + (p.getY() - groundMass.getY()) / dist * (dist - game.getFighterVisionRange() * coeff - game.getHelicopterSpeed() * 0.6 * game.getTacticalNuclearStrikeDelay()));
+
+            double angleToTurn = getAngleToEnemy(AIR, p);
+
+            if (Math.abs(angleToTurn) > Math.PI / 10 && distance(airMass, p) > 30) {
+                rotateAround(airDeq, airMass, angleToTurn, factor, AIR);
+                airVector = turnVector(airVector, angleToTurn);
+                return;
+            }
+
+            moveFromTo(airDeq, new Point(airMass.getX(), airMass.getY()),
+                    target,
+                    game.getHelicopterSpeed() * 0.6);
         }
     }
 
@@ -864,8 +1087,8 @@ public final class MyStrategy implements Strategy {
         return countEnemy;
     }
 
-    private boolean isBigTarget(Point p) {
-        if (getEnemyAround(p, game.getTacticalNuclearStrikeRadius()) > 30) {
+    private boolean isBigTarget(Point p, int bigCount) {
+        if (getEnemyAround(p, game.getTacticalNuclearStrikeRadius()) > bigCount) {
             return true;
         }
         return false;
@@ -883,13 +1106,16 @@ public final class MyStrategy implements Strategy {
     }
 
     private boolean nuclearAttack() {
+        if (fireInTheHole(world.getMyPlayer())) {
+            return true;
+        }
         if (me.getRemainingNuclearStrikeCooldownTicks() > 0) {
             return false;
         }
         if (nearestAirEnemy != null
                 && nearestGroundEnemy != null
-                && distance(nearestAirEnemy, airMass) > game.getFighterVisionRange() + 100
-                && distance(nearestGroundEnemy, groundMass) > game.getTankVisionRange() + 100) {
+                && distance(nearestAirEnemy, airMass) > game.getFighterVisionRange() + 20
+                && distance(nearestGroundEnemy, groundMass) > game.getTankVisionRange() + 20) {
             return false;
         }
         int minValue = 0;
@@ -939,19 +1165,29 @@ public final class MyStrategy implements Strategy {
                 }
             }
         }
-        if (nuclearPoint == null) {
+        if (nuclearPoint == null || nuclearAlly == null) {
             return false;
         }
         final Point finalNuclearPoint = nuclearPoint;
         final Vehicle finalNuclearAlly = nuclearAlly;
-        selectGroup(finalNuclearAlly.getGroups()[0]);
-        delayedMoves.add(move ->
-        {
-            move.setAction(ActionType.MOVE);
-            move.setX(0);
-            move.setY(0);
-        });
-        delayedMoves.add(move ->
+        nuclearGroup = finalNuclearAlly.getGroups()[0];
+        if ((nuclearGroup == AIR && startAir) || (nuclearGroup == GROUND && startGround)) {
+            nuclearDeq.add(move ->
+            {
+                move.setAction(ActionType.CLEAR_AND_SELECT);
+                move.setRight(world.getWidth());
+                move.setBottom(world.getHeight());
+                move.setGroup(finalNuclearAlly.getGroups()[0]);
+                selectedGroup = finalNuclearAlly.getGroups()[0];
+            });
+            nuclearDeq.add(move ->
+            {
+                move.setAction(ActionType.MOVE);
+                move.setX(0);
+                move.setY(0);
+            });
+        }
+        nuclearDeq.add(move ->
         {
             if (isVisible(vehicleById.get(finalNuclearAlly.getId()), finalNuclearPoint)) {
                 move.setAction(ActionType.TACTICAL_NUCLEAR_STRIKE);
@@ -1010,6 +1246,16 @@ public final class MyStrategy implements Strategy {
             default:
                 return false;
         }
+    }
+
+    private Point getGroupMass(int group) {
+        double x = streamVehicles(Ownership.ALLY
+        ).filter(v -> v.getGroups().length > 0 && v.getGroups()[0] == group).mapToDouble(Vehicle::getX).average().orElse(0d);
+
+        double y = streamVehicles(
+                Ownership.ALLY
+        ).filter(v -> v.getGroups().length > 0 && v.getGroups()[0] == group).mapToDouble(Vehicle::getY).average().orElse(0d);
+        return new Point((int) x, (int) y);
     }
 
     private Point getMassOfVehicle(Ownership ownership, VehicleType... vehicleTypes) {

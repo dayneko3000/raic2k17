@@ -7,9 +7,13 @@ public final class Runner {
     private final String token;
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        Runtime.getRuntime().exec("cmd /c local-runner.bat");
-        Thread.sleep(1000);
-        new Runner(args.length == 3 ? args : new String[] {"127.0.0.1", "31001", "0000000000000000"}).run();
+//        Runtime.getRuntime().exec("cmd /c local-runner.bat");
+//        Thread.sleep(1000);
+        try {
+            new Runner(args.length == 3 ? args : new String[]{"127.0.0.1", "31001", "0000000000000000"}).run();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private Runner(String[] args) throws IOException {
