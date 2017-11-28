@@ -77,7 +77,7 @@ public final class MyStrategy implements Strategy {
     private boolean discaledVerticalAir = false;
     private boolean discaledHorizonalAir = false;
     private boolean startAir = false;
-    private boolean nuclearReadyGroundFlag = false;
+    private boolean nuclearReadyGroundFlag = true;
     private boolean nuclearReadyAirFlag = true;
     private boolean nuclearReadyAir = false;
     private boolean nuclearReadyGround = false;
@@ -127,16 +127,22 @@ public final class MyStrategy implements Strategy {
 
         if (!nuclearEnemyAvoid()) {
             if (startAir && airDeq.size() == 0 && ping()) {
+                if (!startGround) {
+                    airDeq.add(selectGroup(AIR));
+                }
                 goAir();
             }
             if (startGround && groundDeq.size() == 0 && ping()) {
-                buildVehicles();
-                goGround();
-                assignIndex++;
-                assignIndex %= 25;
-                if (assignIndex == 0) {
-                    assignNewVehicles();
+                if (!startAir) {
+                    airDeq.add(selectGroup(GROUND));
                 }
+//                buildVehicles();
+                goGround();
+//                assignIndex++;
+//                assignIndex %= 25;
+//                if (assignIndex == 0) {
+//                    assignNewVehicles();
+//                }
             }
         }
         executeDelayedMove();
@@ -177,7 +183,6 @@ public final class MyStrategy implements Strategy {
                 updateTickByVehicleId.put(vehicle.getId(), world.getTickIndex());
             }
         }
-        System.out.println(world.getTickIndex());
         facilities = Arrays.stream(world.getFacilities()).collect(Collectors.toList());
 
         for (VehicleUpdate vehicleUpdate : world.getVehicleUpdates()) {
@@ -557,25 +562,9 @@ public final class MyStrategy implements Strategy {
         }
 
         if (!discaledVerticalGround && enough(GROUND)) {
-            for (int row : getRowList(ARRV, TANK, IFV)) {
-                selectRow(groundDeq, row, GROUND);
-                deselectGroup(groundDeq, AIR);
-                moveVector(groundDeq, new Point(0, -(row - orderY) / 2), game.getTankSpeed() * 0.6);
-            }
+            groundDeq.add(selectGroup(GROUND));
+            scale(groundDeq, groundMass, 0.8);
             discaledVerticalGround = true;
-            return;
-        }
-        if (!discaledHorizonalGround && enough(GROUND)) {
-            boolean shift = false;
-            List<Integer> columns = getColumnList(ARRV, TANK, IFV);
-            columns.sort(Integer::compareTo);
-            for (int column : columns) {
-                selectColumn(groundDeq, column, GROUND);
-                deselectGroup(groundDeq, AIR);
-                moveVector(groundDeq, new Point((-(column - center) / 2), shift ? 2 : 0), game.getTankSpeed() * 0.6);
-                shift = !shift;
-            }
-            discaledHorizonalGround = true;
             return;
         }
 
@@ -684,8 +673,8 @@ public final class MyStrategy implements Strategy {
     private void moveFromTo(Queue<Consumer<Move>> deq, Point from, Point to, Double maxSpeed) {
         deq.add(move ->
         {
-            double edgeX = Math.min(Math.max(50, to.getX()), world.getWidth() - 50);
-            double edgeY = Math.min(Math.max(50, to.getY()), world.getHeight() - 50);
+            double edgeX = Math.min(Math.max(90, to.getX()), world.getWidth() - 90);
+            double edgeY = Math.min(Math.max(90, to.getY()), world.getHeight() - 90);
             move.setAction(ActionType.MOVE);
             move.setX(edgeX - from.getX());
 
@@ -997,7 +986,7 @@ public final class MyStrategy implements Strategy {
     private void buildVehicles() {
         for (Facility f : facilities) {
             if (f.getOwnerPlayerId() == me.getId() && f.getVehicleType() != IFV && distance(new Point(f.getLeft() + 20, f.getTop() + 20), groundMass) > 100) {
-                facilityDeq.add(move ->
+                nuclearDeq.add(move ->
                 {
                     move.setAction(ActionType.SETUP_VEHICLE_PRODUCTION);
                     move.setFacilityId(f.getId());
@@ -1112,10 +1101,18 @@ public final class MyStrategy implements Strategy {
         if (me.getRemainingNuclearStrikeCooldownTicks() > 0) {
             return false;
         }
-        if (nearestAirEnemy != null
-                && nearestGroundEnemy != null
-                && distance(nearestAirEnemy, airMass) > game.getFighterVisionRange() + 20
-                && distance(nearestGroundEnemy, groundMass) > game.getTankVisionRange() + 20) {
+        int net = (int) game.getFighterVisionRange() * 2;
+        int[][] enemys = new int[(int) world.getWidth() / net + 1][(int) world.getHeight() / net + 1];
+        final boolean[] notSkip = {false};
+        streamVehicles(Ownership.ENEMY).forEach(e -> enemys[(int) e.getX() / net][(int) e.getY() / net] = 1);
+        streamVehicles(Ownership.ALLY).forEach(a ->
+        {
+            if (enemys[(int) (a.getX() / net)][(int) (a.getY() / net)] == 1) {
+                enemys[(int) (a.getX() / net)][(int) (a.getY() / net)] = 2;
+                notSkip[0] = true;
+            }
+        });
+        if (!notSkip[0]) {
             return false;
         }
         int minValue = 0;
@@ -1124,12 +1121,10 @@ public final class MyStrategy implements Strategy {
         Map<Point, Integer> groupCount = new HashMap<>();
         Map<Point, Integer> deadCount = new HashMap<>();
         for (Vehicle v : streamVehicles(Ownership.ENEMY).collect(Collectors.toList())) {
-            Point p = new Point(v.getX(), v.getY());
-            if (airMass != null && groundMass != null) {
-                if (distance(p, airMass) > game.getFighterVisionRange() + 100 && distance(p, groundMass) > game.getTankVisionRange() + 100) {
-                    continue;
-                }
+            if (enemys[(int) (v.getX() / net)][(int) (v.getY() / net)] != 2) {
+                continue;
             }
+            Point p = new Point(v.getX(), v.getY());
             int enemyCountAround = 1;
             int deadCountAround = 0;
             for (Vehicle v2 : streamVehicles(Ownership.ENEMY).collect(Collectors.toList())) {
@@ -1170,22 +1165,24 @@ public final class MyStrategy implements Strategy {
         }
         final Point finalNuclearPoint = nuclearPoint;
         final Vehicle finalNuclearAlly = nuclearAlly;
-        nuclearGroup = finalNuclearAlly.getGroups()[0];
-        if ((nuclearGroup == AIR && startAir) || (nuclearGroup == GROUND && startGround)) {
-            nuclearDeq.add(move ->
-            {
-                move.setAction(ActionType.CLEAR_AND_SELECT);
-                move.setRight(world.getWidth());
-                move.setBottom(world.getHeight());
-                move.setGroup(finalNuclearAlly.getGroups()[0]);
-                selectedGroup = finalNuclearAlly.getGroups()[0];
-            });
-            nuclearDeq.add(move ->
-            {
-                move.setAction(ActionType.MOVE);
-                move.setX(0);
-                move.setY(0);
-            });
+        if (finalNuclearAlly.getGroups().length > 0) {
+            nuclearGroup = finalNuclearAlly.getGroups()[0];
+            if ((nuclearGroup == AIR && startAir) || (nuclearGroup == GROUND && startGround)) {
+                nuclearDeq.add(move ->
+                {
+                    move.setAction(ActionType.CLEAR_AND_SELECT);
+                    move.setRight(world.getWidth());
+                    move.setBottom(world.getHeight());
+                    move.setGroup(finalNuclearAlly.getGroups()[0]);
+                    selectedGroup = finalNuclearAlly.getGroups()[0];
+                });
+                nuclearDeq.add(move ->
+                {
+                    move.setAction(ActionType.MOVE);
+                    move.setX(0);
+                    move.setY(0);
+                });
+            }
         }
         nuclearDeq.add(move ->
         {
