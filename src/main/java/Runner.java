@@ -9,10 +9,10 @@ public final class Runner {
     public static void main(String[] args) throws IOException, InterruptedException {
         Runtime.getRuntime().exec("cmd /c local-runner.bat");
         Thread.sleep(1000);
-//        Runtime.getRuntime().exec("cmd /c java -jar old.jar");
-//        Thread.sleep(1000);
+        Runtime.getRuntime().exec("cmd /c java -jar old2.jar");
+        Thread.sleep(1000);
         try {
-            new Runner(args.length == 3 ? args : new String[]{"127.0.0.1", "31001", "0000000000000000"}).run();
+            new Runner(args.length == 3 ? args : new String[]{"127.0.0.1", "31002", "0000000000000000"}).run();
         } catch (Exception e) {
             e.printStackTrace();
         }
